@@ -1,0 +1,82 @@
+---
+title: "lucon_xiccato_data_2023"
+author: "MR"
+date: "2026-04-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(lme4)
+
+```
+
+
+```{r activity}
+# Load the data & log transform distance moved
+df<- read.csv("lucon_xiccato_et_al_2023_activity.csv")
+df <- df %>%
+  mutate(log_distance = log(Distance_moved + 1))
+
+# view the data
+view(df)
+summary(df)
+
+#split into 3 time bins; 0-1, 2-11, 12-60
+df <- df %>%
+  mutate(Time_bin = case_when(
+    Time >= 0 & Time <= 1 ~ "0-1",
+    Time > 1 & Time <= 11 ~ "2-11",
+    Time > 11 & Time <= 60 ~ "12-60",
+    TRUE ~ NA_character_
+  ))
+
+
+# Fit a linear mixed-effects model for each time bin with replicate and subject_ID as random effects and treatment as a fixed effect
+
+model_0_1 <- lmer(
+  log_distance ~ Treatment + (1 | Replicate),
+  data = df %>% filter(Time_bin == "0-1")
+)
+
+model_2_11 <- lmer(
+  log_distance ~ Treatment + Time + (1 | Replicate/Subject_ID),
+  data = df %>% filter(Time_bin == "2-11")
+)
+
+model_12_60 <- lmer(
+  log_distance ~ Treatment + Time + (1 | Replicate/Subject_ID),
+  data = df %>% filter(Time_bin == "12-60")
+)
+
+# Display the model summaries for each time bin
+summary(model_0_1)
+summary(model_2_11)
+summary(model_12_60)
+
+
+# extract effect sizes
+library(emmeans)
+
+emm_0_1 <- emmeans(model_0_1, ~ Treatment)
+emm_2_11 <- emmeans(model_2_11, ~ Treatment)
+emm_12_60 <- emmeans(model_12_60, ~ Treatment)
+
+contrast(emm_0_1, "pairwise") |> summary(infer = TRUE)
+contrast(emm_2_11, "pairwise") |> summary(infer = TRUE)
+contrast(emm_12_60, "pairwise") |> summary(infer = TRUE)
+```
+
+```{r startle response}
+# Load the data
+df<- read.csv("lucon_xiccato_et_al_2023_startle.csv")
+
+# View data
+(view(df))
+
+#
+
+```
+

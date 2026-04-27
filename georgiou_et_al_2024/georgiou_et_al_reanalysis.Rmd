@@ -1,0 +1,71 @@
+---
+title: "georgiou_et_al_2024_reanalysis"
+author: "MR"
+date: "2026-04-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+```
+
+```{r Nocturnal activity}
+# Load the data
+df <- read_csv("georgiou_et_al_2024_data.csv")
+
+# approximate fish counts per colony
+df <- df %>%
+  mutate(
+    N = ifelse(treatment == "control", 11.29, 18),
+    outside = prop_fish_outside * N,
+    inside = N - outside
+  )
+
+
+# aggregate across colonies per night
+df_sum <- df %>%
+  group_by(night, treatment) %>%
+  summarise(
+    outside = sum(outside),
+    inside = sum(inside),
+    .groups = "drop"
+  )
+
+
+# compute log odds ratios with metafor
+library(metafor)
+
+df_wide <- tidyr::pivot_wider(
+  df_sum,
+  names_from = treatment,
+  values_from = c(outside, inside)
+)
+
+es <- escalc(
+  measure = "OR",
+  ai = outside_ALAN,
+  bi = inside_ALAN,
+  ci = outside_control,
+  di = inside_control,
+  data = df_wide
+)
+
+# SD of colonies
+sd_control <- 2.39 * sqrt(7)   # ≈ 6.32
+sd_alan    <- 4.23 * sqrt(7)   # ≈ 11.19
+
+# adjust variance of colony sizes
+cv_control <- sd_control / 11.29   # ≈ 0.56
+cv_alan <- sd_alan / 18         # ≈ 0.62
+
+
+inflation_factor <- 1 + mean(c(cv_control, cv_alan))
+
+es$vi <- es$vi * inflation_factor
+
+es
+```
+
+
