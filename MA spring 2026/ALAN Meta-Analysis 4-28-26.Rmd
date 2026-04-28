@@ -125,7 +125,7 @@ summary(res_mod)
 summary(res_mod)$beta
 ```
 
-```{r spectra x behavior}
+```{r spectra x behavior + duration x behavior}
 res_mod2 <- rma.mv(
   yi, vi,
   mods = ~ spectra_bin * behavioral_category +
@@ -149,12 +149,32 @@ res_main <- rma.mv(
   data = df_ma,
   method = "REML"
 )
+summary(res_main)
+summary(res_main)$beta
 
+# create ordering index
+
+df_ma_ord <- df_ma %>%
+  arrange(yi)   # increasing: most negative to most positive
+
+res_main_ord <- rma.mv(
+  yi, vi,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma_ord,
+  method = "REML"
+)
+
+forest( # PLOT OF ALL EFFECT SIZES NOT GROUPED
+  res_main_ord,
+  slab = df_ma_ord$Study_ID,
+  transf = exp,
+  refline = 1,
+  xlab = "Response ratio"
+)
 
 
 # Aggregate within each study
 study_es <- df_ma %>%
-  filter(!is.na(yi), !is.na(vi), vi > 0) %>%
   group_by(Study_ID) %>%
   do({
     res <- rma(yi, vi, data = ., method = "REML")
@@ -206,4 +226,297 @@ text(
 
 dev.off()
 ```
+
+
+```{r main caterpillar plot}
+
+
+# Extract study-level random effects
+re <- ranef(res_main)$Study_ID
+
+# Convert to dataframe
+df_re <- data.frame(
+  Study_ID = rownames(re),
+  yi = re[,1],
+  ci_lb = re[,2],
+  ci_ub = re[,3]
+)
+
+# Convert to response ratio
+df_plot <- df_ma %>%
+  mutate(
+    RR = exp(yi),
+    RR_lb = exp(yi - 1.96 * sqrt(vi)),
+    RR_ub = exp(yi + 1.96 * sqrt(vi))
+  ) %>%
+  arrange(RR) %>%
+  mutate(id = row_number())
+
+ggplot(df_plot, aes(x = RR, y = id, color = Study_ID)) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  geom_errorbarh(aes(xmin = RR_lb, xmax = RR_ub), height = 0.2) +
+  geom_point(aes(size = 1 / (RR_ub - RR_lb))) +
+  scale_size(range = c(1, 3)) +
+  scale_x_log10() +
+  labs(
+    x = "Response ratio",
+    y = "Effect size",
+    color = "Study"
+  ) +
+  theme_classic()
+```
+
+
+```{r}
+
+df_plot <- df_ma %>%
+  filter(!is.na(yi), !is.na(vi), vi > 0) %>%
+  mutate(
+    RR = exp(yi),
+    RR_lb = exp(yi - 1.96 * sqrt(vi)),
+    RR_ub = exp(yi + 1.96 * sqrt(vi))
+  )
+
+ggplot(df_ma, aes(x = spectra_bin, y = exp(yi), color = Study_ID)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 2) +
+  
+  stat_summary(
+    aes(group = spectra_bin),
+    fun = mean,
+    geom = "point",
+    color = "black",
+    size = 3
+  ) +
+  
+  stat_summary(
+    aes(group = spectra_bin),
+    fun.data = mean_cl_normal,   # <-- adds 95% CI
+    geom = "errorbar",
+    width = 0.2,
+    color = "black"
+  ) +
+  
+  facet_wrap(~ behavioral_category) +
+  scale_y_log10() +
+  labs(
+    x = "Spectral category",
+    y = "Observed response ratio",
+    color = "Study"
+  ) +
+  theme_classic()
+```
+
+```{r}
+ma_mod <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin * behavioral_category +
+          lux_treatment +
+          behavioral_category* experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  method = "ML",
+  data = df_ma
+)
+
+summary(ma_mod)
+```
+
+
+```{r}
+ma_test <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin * behavioral_category * lux_treatment * experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma
+)
+
+summary(ma_test)
+
+anova(res_main_ml, ma_test)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Extract coefficients
+coefs <- as.data.frame(summary(ma_mod)$beta)
+coefs$term <- rownames(coefs)
+
+# Get SE and CI
+vcov_mat <- vcov(ma_mod)
+se <- sqrt(diag(vcov_mat))
+
+coefs <- coefs %>%
+  mutate(
+    se = se,
+    ci_lb = V1 - 1.96 * se,
+    ci_ub = V1 + 1.96 * se,
+    RR = exp(V1),
+    RR_lb = exp(ci_lb),
+    RR_ub = exp(ci_ub)
+  )
+
+# Clean names (optional but recommended)
+coefs$term <- gsub("spectra_bin", "", coefs$term)
+coefs$term <- gsub("behavioral_category", "", coefs$term)
+
+# Plot
+ggplot(coefs, aes(x = RR, y = reorder(term, RR))) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  geom_errorbarh(aes(xmin = RR_lb, xmax = RR_ub), height = 0.2) +
+  geom_point(size = 3) +
+  scale_x_log10() +
+  labs(
+    x = "Response ratio (model estimate)",
+    y = NULL,
+    title = "Moderator analysis"
+  ) +
+  theme_classic()
+```
+
+```{r confirm model fit}
+res_main_ml <- rma.mv(
+  yi, vi,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma,
+  method = "ML"
+)
+
+ma_mod_ml <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin * behavioral_category +
+          lux_treatment +
+          behavioral_category * experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma,
+  method = "ML"
+)
+
+anova(res_main_ml, ma_mod_ml)
+
+summary(ma_mod_ml)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+df_ma <- df_ma %>%
+  mutate(
+    spectra_bin = factor(spectra_bin),
+    behavioral_category = factor(behavioral_category)
+  )
+
+newdat <- expand.grid(
+  experiment_duration_hr = seq(
+    min(df_ma$experiment_duration_hr, na.rm = TRUE),
+    max(df_ma$experiment_duration_hr, na.rm = TRUE),
+    length.out = 100
+  ),
+  spectra_bin = factor("white", levels = levels(df_ma$spectra_bin)),
+  behavioral_category = levels(df_ma$behavioral_category),
+  lux_treatment = mean(df_ma$lux_treatment, na.rm = TRUE)
+)
+
+newdat$behavioral_category <- factor(
+  newdat$behavioral_category,
+  levels = levels(df_ma$behavioral_category)
+)
+# Build model matrix
+X <- model.matrix(
+  ~ spectra_bin * behavioral_category +
+    lux_treatment +
+    behavioral_category * experiment_duration_hr,
+  data = newdat
+)
+
+# Remove intercept
+X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+
+# Get coefficient names from model
+coef_names <- rownames(summary(ma_mod)$beta)
+
+# Remove intercept from coefficient names
+coef_names <- coef_names[coef_names != "intrcpt"]
+
+# Add any missing model columns to X as 0
+missing_cols <- setdiff(coef_names, colnames(X))
+
+for(col in missing_cols) {
+  X[, col] <- 0
+}
+
+# Remove columns not in the model
+X <- X[, coef_names, drop = FALSE]
+
+# Predict
+pred <- predict(ma_mod, newmods = X)
+
+# Combine
+plotdat <- newdat %>%
+  mutate(
+    RR = exp(pred$pred),
+    RR_lb = exp(pred$ci.lb),
+    RR_ub = exp(pred$ci.ub)
+  )
+```
+
+
+```{r}
+ggplot(plotdat, aes(x = experiment_duration_hr, y = RR, color = behavioral_category)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_ribbon(
+    aes(ymin = RR_lb, ymax = RR_ub, fill = behavioral_category),
+    alpha = 0.2,
+    color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  scale_y_log10() +
+  labs(
+    x = "Exposure duration (hours)",
+    y = "Predicted response ratio",
+    color = "Behavior",
+    fill = "Behavior"
+  ) +
+  theme_classic()
+```
+
+
+```{r behavior category effects}
+library(dplyr)
+library(metafor)
+
+# keep valid rows
+df_tmp <- df_ma %>%
+  filter(!is.na(yi), !is.na(vi), vi > 0)
+
+# pool effects within each behavioral category
+cat_es <- df_tmp %>%
+  group_by(behavioral_category) %>%
+  do({
+    m <- rma(yi, vi, data = ., method = "REML")
+    data.frame(
+      yi = as.numeric(m$b),
+      vi = m$se^2,
+      ci_lb = m$ci.lb,
+      ci_ub = m$ci.ub
+    )
+  }) %>%
+  ungroup()
+
+# forest plot (RR scale)
+forest(
+  cat_es$yi,
+  vi = cat_es$vi,
+  slab = cat_es$behavioral_category,
+  transf = exp,
+  refline = 1,
+  xlab = "Response ratio",
+  header = "Behavioral category"
+)
+```
+
+
+
 
