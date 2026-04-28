@@ -1,0 +1,209 @@
+---
+title: "MA ALAN 4-28-26"
+author: "MR"
+date: "2026-04-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# set wd
+setwd("~/GitHub_Projects/ALAN_MA_2026/MA spring 2026")
+
+#load packages
+library(metafor)
+library(tidyverse)
+```
+
+```{r load & clean dataframe}
+
+# load in dataframe
+df<- read.csv("ALAN Meta-Analysis Class 4-28-2026.csv")
+
+view(df)
+
+
+# remove unncessary columns and rows
+df <- df %>%
+  select(1:time_of_assay) |> slice(1:230)
+
+df<- df |> filter(!is.na(yi))
+df$vi <- as.numeric(df$vi)
+```
+
+
+```{r check yi and vi}
+summary(df$yi)
+summary(df$vi)
+
+any(is.na(df$yi))
+any(is.na(df$vi))
+any(df$vi <= 0)
+```
+
+```{r run meta-analysis}
+
+# remove all non LRR effect sizes, any missing effect sizes, and include Study_ID and effect_ID as random effects
+df_ma <- df %>% 
+  filter(
+    eff_size_type == "LRR",
+    !is.na(yi),
+    !is.na(vi),
+    vi > 0
+  ) %>%
+  mutate(
+    Study_ID = as.factor(study_number),
+    effect_ID = row_number()
+  )
+
+
+
+# Random-effects / multilevel meta-analysis
+res_ma <- rma.mv(
+  yi = yi,
+  V = vi,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma,
+  method = "REML"
+)
+
+summary(res_ma)
+
+
+res_mod <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin + lux_treatment + behavioral_category + experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_mr
+)
+
+summary(res_mod)
+summary(res_mod)$beta
+```
+
+```{r meta-regression}
+
+library(dplyr)
+
+# bin colors into broad categories
+df_ma <- df_ma %>%
+  mutate(
+    spectra_peak_num = suppressWarnings(as.numeric(spectra_peak_treatment_nm)),
+    
+    spectra_bin = case_when(
+      # white LEDs (text)
+      grepl("white", spectra_peak_treatment_nm, ignore.case = TRUE) ~ "white",
+      
+      # blue: ~400–499 nm
+      !is.na(spectra_peak_num) & spectra_peak_num < 500 ~ "blue",
+      
+      # green: ~500–569 nm
+      !is.na(spectra_peak_num) & spectra_peak_num >= 500 & spectra_peak_num < 570 ~ "green",
+      
+      # red: ~570+ nm
+      !is.na(spectra_peak_num) & spectra_peak_num >= 570 ~ "red",
+      
+      TRUE ~ NA_character_
+    ),
+    
+    spectra_bin = factor(spectra_bin, levels = c("blue", "green", "red", "white"))
+  )
+
+
+
+# run MA with spectra binned, lux, behavioral category, and exp duration but no interactions
+res_mod <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin + lux_treatment + behavioral_category + experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_mr
+)
+
+
+summary(res_mod)
+summary(res_mod)$beta
+```
+
+```{r spectra x behavior}
+res_mod2 <- rma.mv(
+  yi, vi,
+  mods = ~ spectra_bin * behavioral_category +
+          lux_treatment +
+          behavioral_category* experiment_duration_hr,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma
+)
+
+summary(res_mod2)
+summary(res_mod2)$beta
+```
+
+```{r main forest plot}
+
+
+# Main random-effects model
+res_main <- rma.mv(
+  yi, vi,
+  random = ~ 1 | Study_ID/effect_ID,
+  data = df_ma,
+  method = "REML"
+)
+
+
+
+# Aggregate within each study
+study_es <- df_ma %>%
+  filter(!is.na(yi), !is.na(vi), vi > 0) %>%
+  group_by(Study_ID) %>%
+  do({
+    res <- rma(yi, vi, data = ., method = "REML")
+    data.frame(
+      yi = as.numeric(res$b),
+      vi = res$se^2
+    )
+  }) %>%
+  ungroup()
+
+# Overall study-level model
+res_study <- rma(
+  yi, vi,
+  data = study_es,
+  method = "REML"
+)
+
+# Add weights
+study_es <- study_es %>%
+  mutate(
+    weight = weights(res_study),
+    weight_perc = 100 * weight / sum(weight),
+    weight_label = paste0(round(weight_perc, 1), "%")
+  )
+
+# Forest plot with study name and weight
+png("forest_plot.png", width = 1400, height = 900, res = 300)
+
+forest(
+  res_study,
+  slab = study_es$Study_ID,
+  transf = exp,
+  refline = 1,
+  xlab = "Response ratio",
+  header = c("Study", "Response ratio [95% CI]"),
+  ilab = study_es$weight_label,
+  ilab.xpos = -0.5,
+  order = order(study_es$yi),
+  cex = 0.7
+)
+
+text(
+  x = -0.5,
+  y = length(study_es$yi) + 2,
+  labels = "Weight",
+  font = 2,
+  cex = 0.7
+)
+
+dev.off()
+```
+

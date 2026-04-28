@@ -49,23 +49,12 @@ es <- escalc(
   bi = inside_ALAN,
   ci = outside_control,
   di = inside_control,
-  data = df_wide
+  data = df_wide,
+  add = 0.5,
+  to = "only0"
 )
 
-# SD of colonies
-sd_control <- 2.39 * sqrt(7)   # ≈ 6.32
-sd_alan    <- 4.23 * sqrt(7)   # ≈ 11.19
 
-# adjust variance of colony sizes
-cv_control <- sd_control / 11.29   # ≈ 0.56
-cv_alan <- sd_alan / 18         # ≈ 0.62
-
-
-inflation_factor <- 1 + mean(c(cv_control, cv_alan))
-
-es$vi <- es$vi * inflation_factor
-
-es
 ```
 
 
